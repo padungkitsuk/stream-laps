@@ -1,18 +1,18 @@
 package com.stream.application;
 
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.StringReader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+// import java.io.BufferedReader;
+// import java.io.FileInputStream;
+// import java.io.FileOutputStream;
+// import java.io.IOException;
+// import java.io.StringReader;
+// import java.nio.charset.StandardCharsets;
+// import java.nio.file.Files;
+// import java.nio.file.Paths;
 
-import org.apache.poi.xwpf.usermodel.XWPFDocument;
+// import org.apache.poi.xwpf.usermodel.XWPFDocument;
 
 import com.stream.application.wordreplace.ThaiTextUtil;
-import com.stream.application.wordreplace.WordReplaceUtil;
+// import com.stream.application.wordreplace.WordReplaceUtil;
 
 
 public class TestWordReplaceApp {
