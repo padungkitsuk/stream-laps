@@ -1,0 +1,403 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created with Jaspersoft Studio version 6.20.1.final using JasperReports Library version 6.20.1-7584acb244139816654f64e2fd57a00d3e31921e  -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="Blank_A4" pageWidth="595" pageHeight="842" columnWidth="555" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20" uuid="3a8d77cf-6d65-4e4b-8287-cb50b089af37">
+	<property name="com.jaspersoft.studio.data.defaultdataadapter" value="postgreSQL"/>
+	<property name="com.jaspersoft.studio.data.sql.tables" value=""/>
+	<queryString>
+		<![CDATA[WITH params AS (
+    SELECT 
+        1::int      as target_task_id,
+        'th'::text as lang
+),
+img_temp AS (
+    -- ก้อนที่ 1: FOUND
+    SELECT 
+        rs.task_id,
+        rs.suggestion_no,
+        rs.suggestion_code,
+        (ROW_NUMBER() OVER (
+            PARTITION BY rs.task_id, rs.suggestion_no, rsi.image_type 
+            ORDER BY COALESCE(rsi.seq, 0) ASC
+        ))::int as new_seq,
+        rsi.image_type as mapping, 
+        rsi.image_part,
+        rsi.found_image_description,
+        concat(
+            upper(rs.task_type), '_',
+            replace(replace(upper(rs.suggestion_no),' ','_'),'-','_'), '_', 
+            upper(rsi.image_type), '_', 
+            TO_CHAR(ROW_NUMBER() OVER (
+                PARTITION BY rs.task_id, rs.suggestion_no, rsi.image_type 
+                ORDER BY COALESCE(rsi.seq, 0) ASC
+            ), 'FM00')
+        ) as code,
+        CASE WHEN rs.suggestion_code = 'ot-01-01' THEN rsi.suggestion_image_description ELSE
+            TRIM(REGEXP_REPLACE(REGEXP_REPLACE(CASE WHEN p.lang = 'th' THEN misr.subject_th ELSE misr.subject_en END, '[\r\n]+', ' ', 'g'), '[",;:]', '', 'g'))
+        END as suggestion_image_description
+    FROM params p 
+    INNER JOIN risk_suggestion rs ON rs.task_id = p.target_task_id
+    LEFT JOIN risk_suggestion_image rsi ON rs.task_id = rsi.task_id AND rs.suggestion_no = rsi.code  
+    LEFT JOIN master_image_showing_recommendation misr ON rsi.suggestion_image_description = misr.code 
+    WHERE rsi.image_part IS NOT NULL AND rsi.image_type ='FOUND'
+
+    UNION ALL 
+
+    -- ก้อนที่ 2: EXAMPLE 
+    SELECT * FROM (
+        SELECT DISTINCT ON (rs.suggestion_no, mdsi.image_type, CASE WHEN rs.suggestion_code = 'ot-01-01' THEN rsi.image_part ELSE mdsi.image_part END)
+            rs.task_id,
+            rs.suggestion_no,
+            rs.suggestion_code,
+            (ROW_NUMBER() OVER (
+                PARTITION BY rs.suggestion_no, mdsi.image_type 
+                ORDER BY rs.suggestion_no
+            ))::int as new_seq,
+            mdsi.image_type as mapping, 
+            CASE WHEN rs.suggestion_code = 'ot-01-01' THEN rsi.image_part ELSE mdsi.image_part END as image_part,
+            rsi.found_image_description,
+            concat(
+                upper(rs.task_type), '_',
+                replace(replace(upper(rs.suggestion_no),' ','_'),'-','_'), '_', 
+                upper(mdsi.image_type), '_', 
+                TO_CHAR(ROW_NUMBER() OVER (
+                    PARTITION BY rs.suggestion_no, mdsi.image_type 
+                    ORDER BY rs.suggestion_no
+                ), 'FM00')
+            ) as code,
+            CASE WHEN rs.suggestion_code = 'ot-01-01' THEN rsi.suggestion_image_description ELSE
+                TRIM(REGEXP_REPLACE(REGEXP_REPLACE(CASE WHEN p.lang = 'th' THEN misr.subject_th ELSE misr.subject_en END, '[\r\n]+', ' ', 'g'), '[",;:]', '', 'g'))
+            END as suggestion_image_description
+        FROM params p 
+        INNER JOIN risk_suggestion rs ON rs.task_id = p.target_task_id
+        LEFT JOIN risk_suggestion_image rsi ON rs.task_id = rsi.task_id AND rs.suggestion_no = rsi.code AND rsi.image_type ='EXAMPLE' AND rs.suggestion_code = 'ot-01-01'
+        LEFT JOIN master_data_suggestion_image mdsi ON rs.suggestion_code = mdsi.code AND mdsi.image_type = 'EXAMPLE'
+        LEFT JOIN master_image_showing_recommendation misr ON mdsi.recommend_code = misr.code
+        WHERE (rs.suggestion_code = 'ot-01-01' AND rsi.image_part IS NOT NULL)
+           OR (rs.suggestion_code <> 'ot-01-01' AND mdsi.image_part IS NOT NULL)
+        ORDER BY rs.suggestion_no, mdsi.image_type, CASE WHEN rs.suggestion_code = 'ot-01-01' THEN rsi.image_part ELSE mdsi.image_part END
+    ) sub_example
+  
+  UNION ALL
+  
+  SELECT * FROM (
+        SELECT DISTINCT ON (rs.suggestion_no, mdsi.image_type, mdsi.image_part)
+            rs.task_id,
+            rs.suggestion_no,
+            rs.suggestion_code,
+            (ROW_NUMBER() OVER (
+                PARTITION BY rs.suggestion_no, mdsi.image_type 
+                ORDER BY rs.suggestion_no
+            ))::int as new_seq,
+            'REF' as mapping, 
+            mdsi.image_part as image_part,
+            '' as found_image_description,
+            concat(
+                upper(rs.task_type), '_',
+                replace(replace(upper(rs.suggestion_no),' ','_'),'-','_'), '_', 
+                upper('REF'), '_', 
+                TO_CHAR(ROW_NUMBER() OVER (
+                    PARTITION BY rs.suggestion_no, mdsi.image_type 
+                    ORDER BY rs.suggestion_no
+                ), 'FM00')
+            ) as code,
+            TRIM(REGEXP_REPLACE(REGEXP_REPLACE(CASE WHEN p.lang = 'th' THEN misr.subject_th ELSE misr.subject_en END, '[\r\n]+', ' ', 'g'), '[",;:]', '', 'g'))
+             as suggestion_image_description
+        FROM params p 
+        INNER JOIN risk_suggestion rs ON rs.task_id = p.target_task_id
+        LEFT JOIN master_data_suggestion_image mdsi ON rs.suggestion_code = mdsi.code AND mdsi.image_type = 'FOUND'
+        LEFT JOIN master_image_showing_recommendation misr ON mdsi.recommend_code = misr.code
+        WHERE mdsi.image_part IS NOT NULL
+        ORDER BY rs.suggestion_no, mdsi.image_type, mdsi.image_part
+    ) sub_ref
+),
+main_data AS (
+    SELECT 
+        ci.task_id,
+        coalesce(rs.suggestion_no,'') as suggestion_no,
+        rs.suggestion_code,
+        rs.suggestion_type,
+        rs.progress,
+        coalesce(rs.noticed,'') as noticed,
+        coalesce(rs.suggestion,'') as suggestion,
+        p.lang,
+        rs.task_type
+    FROM params p
+    INNER JOIN case_info ci ON ci.task_id = p.target_task_id
+    -- ใช้ INNER JOIN แทน LEFT JOIN กับ risk_suggestion เพื่อให้มั่นใจว่าข้อมูลตั้งต้นมีจริง
+    INNER JOIN risk_suggestion rs ON ci.task_id = rs.task_id 
+    
+)
+SELECT 
+    md.task_id,
+    md.task_type,
+    md.suggestion_no,
+    concat(
+    case when md.suggestion_type = 't-01' then 'A-' when md.suggestion_type = 't-02' then 'B-'  when md.suggestion_type = 't-03' then 'C-' else ''end,
+    md.suggestion_no
+    ) as suggestion_class,
+    md.suggestion_code,
+    coalesce(CASE WHEN md.lang = 'th' THEN mds.suggest_th ELSE mds.suggest_en END, '') as suggestion_code_desc,
+    md.suggestion_type,
+    coalesce(CASE WHEN md.lang = 'th' THEN mst.subject_th ELSE mst.subject_en END, '') as suggestion_type_desc,
+    md.progress,
+    coalesce(CASE WHEN md.lang = 'th' THEN mss.subject_th ELSE mss.subject_en END, '') as progress_desc,
+    md.noticed,
+    md.suggestion,
+    -- FOUND: ลำดับที่ 1 และ 2 (ใช้ new_seq)
+    it1.new_seq as seq1,
+    it2.new_seq as seq2,
+    -- EXAMPLE: ลำดับที่ 1 และ 2 (ใช้ new_seq)
+    it3.new_seq as seq3,
+    it4.new_seq as seq4,
+    it1.image_part as image_part1,
+    it2.image_part as image_part2,
+    it3.image_part as image_part3,
+    it4.image_part as image_part4,
+    coalesce(it1.code,'') as img_dynamic_code1,
+    coalesce(it1.found_image_description ,'') as img_dynamic_name1,
+    coalesce(it2.code,'') as img_dynamic_code2,
+    coalesce(it2.found_image_description ,'') as img_dynamic_name2,
+    coalesce(it3.code,'') as img_dynamic_code3,
+    coalesce(it3.suggestion_image_description  ,'') as img_dynamic_name3,
+    coalesce(it4.code,'') as img_dynamic_code4,
+    coalesce(it4.suggestion_image_description ,'') as img_dynamic_name4,
+    CASE WHEN md.lang = 'th' THEN mds.reference_th ELSE mds.reference_en end as reference,
+    it5.image_part as image_part5,
+    it6.image_part as image_part6,
+    coalesce(it5.code,'') as img_dynamic_code5,
+    coalesce(it5.suggestion_image_description ,'') as img_dynamic_name5,
+    coalesce(it6.code,'') as img_dynamic_code6,
+    coalesce(it6.suggestion_image_description ,'') as img_dynamic_name6,
+    CASE 
+        WHEN ROW_NUMBER() OVER (
+            ORDER BY 
+                CASE md.suggestion_type
+                    WHEN 't-01' THEN 1
+                    WHEN 't-02' THEN 2
+                    WHEN 't-03' THEN 3
+                    ELSE 4
+                END ASC,
+                NULLIF(REGEXP_REPLACE(md.suggestion_no, '[^0-9]', '', 'g'), '')::numeric ASC
+        ) = COUNT(*) OVER() THEN 1 
+        ELSE 0 
+    END AS check_last_row
+FROM main_data md
+LEFT JOIN master_data_suggestion mds ON mds.code = md.suggestion_code 
+LEFT JOIN master_suggestion_type mst ON mst.code = md.suggestion_type 
+LEFT JOIN master_suggestion_status mss ON mss.code = md.progress  
+LEFT JOIN img_temp it1 ON md.suggestion_no = it1.suggestion_no AND it1.mapping = 'FOUND' AND it1.new_seq = 1
+LEFT JOIN img_temp it2 ON md.suggestion_no = it2.suggestion_no AND it2.mapping = 'FOUND' AND it2.new_seq = 2
+LEFT JOIN img_temp it3 ON md.suggestion_no = it3.suggestion_no AND it3.mapping = 'EXAMPLE' AND it3.new_seq = 1
+LEFT JOIN img_temp it4 ON md.suggestion_no = it4.suggestion_no AND it4.mapping = 'EXAMPLE' AND it4.new_seq = 2
+LEFT JOIN img_temp it5 ON md.suggestion_no = it5.suggestion_no AND it5.mapping = 'REF' AND it5.new_seq = 1
+LEFT JOIN img_temp it6 ON md.suggestion_no = it6.suggestion_no AND it6.mapping = 'REF' AND it6.new_seq = 2
+ORDER BY
+    CASE md.suggestion_type
+        WHEN 't-01' THEN 1
+        WHEN 't-02' THEN 2
+        WHEN 't-03' THEN 3
+        ELSE 4
+    END ASC,
+    NULLIF(REGEXP_REPLACE(md.suggestion_no, '[^0-9]', '', 'g'), '')::numeric ASC]]>
+	</queryString>
+	<field name="task_id" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="task_id"/>
+		<property name="com.jaspersoft.studio.field.label" value="task_id"/>
+		<property name="com.jaspersoft.studio.field.tree.path" value="case_info"/>
+	</field>
+	<field name="task_type" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="task_type"/>
+		<property name="com.jaspersoft.studio.field.label" value="task_type"/>
+		<property name="com.jaspersoft.studio.field.tree.path" value="risk_suggestion"/>
+	</field>
+	<field name="suggestion_no" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_no"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_no"/>
+	</field>
+	<field name="suggestion_class" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_class"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_class"/>
+	</field>
+	<field name="suggestion_code" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_code"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_code"/>
+		<property name="com.jaspersoft.studio.field.tree.path" value="risk_suggestion"/>
+	</field>
+	<field name="suggestion_code_desc" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_code_desc"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_code_desc"/>
+	</field>
+	<field name="suggestion_type" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_type"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_type"/>
+		<property name="com.jaspersoft.studio.field.tree.path" value="risk_suggestion"/>
+	</field>
+	<field name="suggestion_type_desc" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion_type_desc"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion_type_desc"/>
+	</field>
+	<field name="progress" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="progress"/>
+		<property name="com.jaspersoft.studio.field.label" value="progress"/>
+		<property name="com.jaspersoft.studio.field.tree.path" value="risk_suggestion"/>
+	</field>
+	<field name="progress_desc" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="progress_desc"/>
+		<property name="com.jaspersoft.studio.field.label" value="progress_desc"/>
+	</field>
+	<field name="noticed" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="noticed"/>
+		<property name="com.jaspersoft.studio.field.label" value="noticed"/>
+	</field>
+	<field name="suggestion" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="suggestion"/>
+		<property name="com.jaspersoft.studio.field.label" value="suggestion"/>
+	</field>
+	<field name="seq1" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="seq1"/>
+		<property name="com.jaspersoft.studio.field.label" value="seq1"/>
+	</field>
+	<field name="seq2" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="seq2"/>
+		<property name="com.jaspersoft.studio.field.label" value="seq2"/>
+	</field>
+	<field name="seq3" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="seq3"/>
+		<property name="com.jaspersoft.studio.field.label" value="seq3"/>
+	</field>
+	<field name="seq4" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="seq4"/>
+		<property name="com.jaspersoft.studio.field.label" value="seq4"/>
+	</field>
+	<field name="image_part1" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part1"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part1"/>
+	</field>
+	<field name="image_part2" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part2"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part2"/>
+	</field>
+	<field name="image_part3" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part3"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part3"/>
+	</field>
+	<field name="image_part4" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part4"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part4"/>
+	</field>
+	<field name="img_dynamic_code1" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code1"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code1"/>
+	</field>
+	<field name="img_dynamic_name1" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name1"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name1"/>
+	</field>
+	<field name="img_dynamic_code2" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code2"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code2"/>
+	</field>
+	<field name="img_dynamic_name2" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name2"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name2"/>
+	</field>
+	<field name="img_dynamic_code3" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code3"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code3"/>
+	</field>
+	<field name="img_dynamic_name3" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name3"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name3"/>
+	</field>
+	<field name="img_dynamic_code4" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code4"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code4"/>
+	</field>
+	<field name="img_dynamic_name4" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name4"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name4"/>
+	</field>
+	<field name="reference" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="reference"/>
+		<property name="com.jaspersoft.studio.field.label" value="reference"/>
+	</field>
+	<field name="image_part5" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part5"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part5"/>
+	</field>
+	<field name="image_part6" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="image_part6"/>
+		<property name="com.jaspersoft.studio.field.label" value="image_part6"/>
+	</field>
+	<field name="img_dynamic_code5" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code5"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code5"/>
+	</field>
+	<field name="img_dynamic_name5" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name5"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name5"/>
+	</field>
+	<field name="img_dynamic_code6" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_code6"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_code6"/>
+	</field>
+	<field name="img_dynamic_name6" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.name" value="img_dynamic_name6"/>
+		<property name="com.jaspersoft.studio.field.label" value="img_dynamic_name6"/>
+	</field>
+	<field name="check_last_row" class="java.lang.Integer">
+		<property name="com.jaspersoft.studio.field.name" value="check_last_row"/>
+		<property name="com.jaspersoft.studio.field.label" value="check_last_row"/>
+	</field>
+	<background>
+		<band splitType="Stretch"/>
+	</background>
+	<title>
+		<band height="79" splitType="Stretch"/>
+	</title>
+	<pageHeader>
+		<band height="35" splitType="Stretch"/>
+	</pageHeader>
+	<columnHeader>
+		<band height="61" splitType="Stretch"/>
+	</columnHeader>
+	<detail>
+		<band height="125" splitType="Stretch">
+			<textField textAdjust="StretchHeight">
+				<reportElement positionType="Float" stretchType="ContainerHeight" x="40" y="0" width="500" height="20" uuid="fa522f0e-552c-4d71-9ff8-340b495463d0">
+					<property name="com.jaspersoft.studio.unit.firstLineIndent" value="px"/>
+					<property name="com.jaspersoft.studio.unit.height" value="px"/>
+					<property name="com.jaspersoft.studio.unit.x" value="px"/>
+					<property name="com.jaspersoft.studio.unit.y" value="px"/>
+				</reportElement>
+				<textElement markup="none">
+					<font fontName="TH Sarabun" size="14" isBold="false"/>
+					<paragraph firstLineIndent="20"/>
+				</textElement>
+				<textFieldExpression><![CDATA[com.stream.application.wordreplace.ThaiTextUtil.addThaiWordBreakPreserveNewLine($F{noticed}.replace("\t", "  ").replaceAll(" ", "\u00A0"))]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement positionType="Float" stretchType="ContainerHeight" x="30" y="30" width="500" height="20" uuid="f7c704b6-f012-4ca7-80c2-2e733510dcd0">
+					<property name="com.jaspersoft.studio.unit.firstLineIndent" value="px"/>
+					<property name="com.jaspersoft.studio.unit.height" value="px"/>
+					<property name="com.jaspersoft.studio.unit.x" value="px"/>
+					<property name="com.jaspersoft.studio.unit.y" value="px"/>
+				</reportElement>
+				<textElement markup="none">
+					<font fontName="TH Sarabun" size="14" isBold="false"/>
+					<paragraph firstLineIndent="20"/>
+				</textElement>
+				<textFieldExpression><![CDATA[com.stream.application.wordreplace.ThaiTextUtil.addThaiWordBreakPreserveNewLine($F{noticed}.replace("\t", "  ").replaceAll(" ", "\u00A0"))]]></textFieldExpression>
+			</textField>
+		</band>
+	</detail>
+	<columnFooter>
+		<band height="45" splitType="Stretch"/>
+	</columnFooter>
+	<pageFooter>
+		<band height="54" splitType="Stretch"/>
+	</pageFooter>
+	<summary>
+		<band height="42" splitType="Stretch"/>
+	</summary>
+</jasperReport>
