@@ -15,9 +15,9 @@ import com.ibm.icu.text.BreakIterator;
 public class ThaiTextUtil {
 
     private static final String ZWSP = "​";
-    // Thin space: has real, measurable width (unlike ZWSP) so it can be repeated to pad a
+    // Regular space used to pad justified lines. Not U+2009: the font has no glyph for it, so a lone one measures ~9.7pt but renders ~2.8pt, and lines came out short. Regular space measures the same everywhere, and can be repeated to pad a
     // line out to a target width for justification.
-    private static final String THIN_SPACE = " ";
+    private static final String PAD_SPACE = " ";
     private static final String FONT_RESOURCE = "THSarabunNew.ttf";
     private static final Map<Float, Font> FONT_CACHE = new ConcurrentHashMap<>();
 
@@ -59,10 +59,10 @@ public class ThaiTextUtil {
     }
 
     /**
-     * Same word-break behaviour as {@link #addThaiWordBreakPreserveNewLine(String)}, but every
+     * Wraps each paragraph at ICU word boundaries into lines of at most {@code widthPoints}, joined by explicit newlines (JasperReports does not treat ZWSP as a break opportunity, so it must not be left to re-wrap). Every
      * wrapped line (except the last line of a paragraph, and any line with only one segment)
      * is right-justified to {@code widthPoints} by padding the gaps between ICU word-break
-     * segments with thin spaces, sized using the real glyph metrics of {@code fontSizePt} pt
+     * segments with spaces, sized using the real glyph metrics of {@code fontSizePt} pt
      * TH Sarabun. Thai has no natural inter-word space to stretch (unlike Latin text), so this
      * measures and pads manually instead of relying on JasperReports' own Justified alignment,
      * which has no effect on text built from {@link #addThaiWordBreakPreserveNewLine(String)}.
@@ -95,7 +95,7 @@ public class ThaiTextUtil {
         for (int li = 0; li < wrapped.size(); li++) {
             List<String> subLine = wrapped.get(li);
             boolean lastSubLine = (li == wrapped.size() - 1);
-            out.append(lastSubLine || subLine.size() < 2
+            out.append(li > 0 ? "\n" : "").append(lastSubLine || subLine.size() < 2
                     ? joinUnjustified(subLine)
                     : joinJustified(subLine, widthPoints, font, frc));
         }
@@ -141,7 +141,7 @@ public class ThaiTextUtil {
     private static String joinUnjustified(List<String> segments) {
         StringBuilder out = new StringBuilder();
         for (String seg : segments) {
-            out.append(seg).append(ZWSP);
+            out.append(seg);
         }
         return out.toString();
     }
@@ -152,26 +152,25 @@ public class ThaiTextUtil {
             rawWidth += width(seg, font, frc);
         }
 
-        float slack = Math.max(0f, widthPoints - rawWidth);
+        float slack = Math.max(0f, widthPoints - rawWidth - 0.5f);
         int gaps = segments.size() - 1;
-        float thinSpaceWidth = width(THIN_SPACE, font, frc);
-        int totalThinSpaces = thinSpaceWidth > 0f ? Math.round(slack / thinSpaceWidth) : 0;
+        float padSpaceWidth = width(PAD_SPACE, font, frc);
+        int totalPadSpaces = padSpaceWidth > 0f ? (int) Math.floor(slack / padSpaceWidth) : 0;
 
-        // Spread totalThinSpaces evenly across the gaps using running cumulative targets
+        // Spread totalPadSpaces evenly across the gaps using running cumulative targets
         // (like Bresenham line drawing), instead of rounding slack/gaps per gap independently -
         // that loses the whole budget to underflow whenever the per-gap share is smaller than
-        // one thin space, which is the common case once a line already nearly fills the width.
+        // one pad space, which is the common case once a line already nearly fills the width.
         StringBuilder out = new StringBuilder();
         int distributed = 0;
         for (int i = 0; i < segments.size(); i++) {
             out.append(segments.get(i));
             if (i < gaps) {
-                int cumulativeTarget = (i + 1) * totalThinSpaces / gaps;
+                int cumulativeTarget = (i + 1) * totalPadSpaces / gaps;
                 int count = cumulativeTarget - distributed;
                 distributed = cumulativeTarget;
-                out.append(ZWSP);
                 for (int t = 0; t < count; t++) {
-                    out.append(THIN_SPACE);
+                    out.append(PAD_SPACE);
                 }
             }
         }
