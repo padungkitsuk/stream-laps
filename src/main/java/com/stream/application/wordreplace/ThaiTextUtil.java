@@ -70,6 +70,19 @@ public class ThaiTextUtil {
      * @param widthPoints the text field's usable width in points (box width minus padding/indent)
      */
     public static String addThaiWordBreakJustified(String input, float widthPoints, float fontSizePt) {
+        return wrapText(input, widthPoints, fontSizePt, true);
+    }
+
+    /**
+     * Same wrapping as {@link #addThaiWordBreakJustified(String, float, float)} (ICU word boundaries, explicit
+     * newlines, lines of at most {@code widthPoints}) but the lines are not padded, for text where extra spaces
+     * would be wrong: names, addresses, URLs, e-mail.
+     */
+    public static String addThaiWordBreakWrapped(String input, float widthPoints, float fontSizePt) {
+        return wrapText(input, widthPoints, fontSizePt, false);
+    }
+
+    private static String wrapText(String input, float widthPoints, float fontSizePt, boolean justify) {
         Font font = font(fontSizePt);
         FontRenderContext frc = new FontRenderContext(null, true, true);
 
@@ -77,7 +90,7 @@ public class ThaiTextUtil {
         StringBuilder finalResult = new StringBuilder();
 
         for (int i = 0; i < lines.length; i++) {
-            finalResult.append(justifyLine(lines[i], widthPoints, font, frc));
+            finalResult.append(justifyLine(lines[i], widthPoints, font, frc, justify));
 
             if (i < lines.length - 1) {
                 finalResult.append("\n");
@@ -87,7 +100,7 @@ public class ThaiTextUtil {
         return finalResult.toString();
     }
 
-    private static String justifyLine(String line, float widthPoints, Font font, FontRenderContext frc) {
+    private static String justifyLine(String line, float widthPoints, Font font, FontRenderContext frc, boolean justify) {
         List<String> segments = segment(line);
         List<List<String>> wrapped = wrap(segments, widthPoints, font, frc);
 
@@ -95,7 +108,7 @@ public class ThaiTextUtil {
         for (int li = 0; li < wrapped.size(); li++) {
             List<String> subLine = wrapped.get(li);
             boolean lastSubLine = (li == wrapped.size() - 1);
-            out.append(li > 0 ? "\n" : "").append(lastSubLine || subLine.size() < 2
+            out.append(li > 0 ? "\n" : "").append(!justify || lastSubLine || subLine.size() < 2
                     ? joinUnjustified(subLine)
                     : joinJustified(subLine, widthPoints, font, frc));
         }
