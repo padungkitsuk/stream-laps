@@ -18,6 +18,9 @@ public class ThaiTextUtil {
     // Regular space used to pad justified lines. Not U+2009: the font has no glyph for it, so a lone one measures ~9.7pt but renders ~2.8pt, and lines came out short. Regular space measures the same everywhere, and can be repeated to pad a
     // line out to a target width for justification.
     private static final String PAD_SPACE = " ";
+    // A wrapped line that would need more than this many pad spaces per gap is left unjustified: it is a short line
+    // ended early by an unbreakable long token on the next line, and stretching it looks like odd wide gaps.
+    private static final int MAX_PAD_SPACES_PER_GAP = 3;
     private static final String FONT_RESOURCE = "THSarabunNew.ttf";
     private static final Map<Float, Font> FONT_CACHE = new ConcurrentHashMap<>();
 
@@ -169,6 +172,9 @@ public class ThaiTextUtil {
         int gaps = segments.size() - 1;
         float padSpaceWidth = width(PAD_SPACE, font, frc);
         int totalPadSpaces = padSpaceWidth > 0f ? (int) Math.floor(slack / padSpaceWidth) : 0;
+        if (totalPadSpaces > MAX_PAD_SPACES_PER_GAP * gaps) {
+            return joinUnjustified(segments);
+        }
 
         // Spread totalPadSpaces evenly across the gaps using running cumulative targets
         // (like Bresenham line drawing), instead of rounding slack/gaps per gap independently -
