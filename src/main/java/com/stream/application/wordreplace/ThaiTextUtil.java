@@ -21,6 +21,8 @@ public class ThaiTextUtil {
     // A wrapped line that would need more than this many pad spaces per gap is left unjustified: it is a short line
     // ended early by an unbreakable long token on the next line, and stretching it looks like odd wide gaps.
     private static final int MAX_PAD_SPACES_PER_GAP = 3;
+    // addThaiWordBreakJustifiedParagraph is for table cells that must be justified edge to edge, so it allows wider gaps.
+    private static final int PARAGRAPH_MAX_PAD_SPACES_PER_GAP = 8;
     // A segment wider than this share of the line is a long token (URL, code, text typed without spaces): it is broken
     // between characters to fill the rest of a line, instead of leaving a short line in front of it or overflowing.
     private static final float LONG_TOKEN_SHARE = 1f / 3f;
@@ -84,7 +86,17 @@ public class ThaiTextUtil {
      * @param widthPoints the text field's usable width in points (box width minus padding/indent)
      */
     public static String addThaiWordBreakJustified(String input, float widthPoints, float fontSizePt) {
-        return wrapText(input, widthPoints, fontSizePt, true);
+        return wrapText(input, widthPoints, fontSizePt, MAX_PAD_SPACES_PER_GAP);
+    }
+
+    /**
+     * Same as {@link #addThaiWordBreakJustified(String, float, float)}, but the whole text is one paragraph: every
+     * line break (with the spaces around it) becomes a single space, so text typed or pasted with hard line breaks
+     * flows on, and every line but the last is justified even when that needs wider gaps, for free text shown in a
+     * table cell.
+     */
+    public static String addThaiWordBreakJustifiedParagraph(String input, float widthPoints, float fontSizePt) {
+        return wrapText(input.replaceAll("\\s*\\R\\s*", " ").strip(), widthPoints, fontSizePt, PARAGRAPH_MAX_PAD_SPACES_PER_GAP);
     }
 
     /**
@@ -93,10 +105,11 @@ public class ThaiTextUtil {
      * would be wrong: names, addresses, URLs, e-mail.
      */
     public static String addThaiWordBreakWrapped(String input, float widthPoints, float fontSizePt) {
-        return wrapText(input, widthPoints, fontSizePt, false);
+        return wrapText(input, widthPoints, fontSizePt, 0);
     }
 
-    private static String wrapText(String input, float widthPoints, float fontSizePt, boolean justify) {
+    // maxPadSpacesPerGap 0 means lines are not justified
+    private static String wrapText(String input, float widthPoints, float fontSizePt, int maxPadSpacesPerGap) {
         Font font = font(fontSizePt);
         FontRenderContext frc = new FontRenderContext(null, true, true);
 
@@ -104,7 +117,7 @@ public class ThaiTextUtil {
         StringBuilder finalResult = new StringBuilder();
 
         for (int i = 0; i < lines.length; i++) {
-            finalResult.append(justifyLine(lines[i], widthPoints, font, frc, justify));
+            finalResult.append(justifyLine(lines[i], widthPoints, font, frc, maxPadSpacesPerGap));
 
             if (i < lines.length - 1) {
                 finalResult.append("\n");
@@ -114,7 +127,7 @@ public class ThaiTextUtil {
         return finalResult.toString();
     }
 
-    private static String justifyLine(String line, float widthPoints, Font font, FontRenderContext frc, boolean justify) {
+    private static String justifyLine(String line, float widthPoints, Font font, FontRenderContext frc, int maxPadSpacesPerGap) {
         List<String> segments = segment(line);
         List<List<String>> wrapped = wrap(segments, widthPoints, font, frc);
 
@@ -128,9 +141,9 @@ public class ThaiTextUtil {
                 subLine.remove(last);
             }
             boolean lastSubLine = (li == wrapped.size() - 1);
-            out.append(li > 0 ? "\n" : "").append(!justify || lastSubLine || subLine.size() < 2
+            out.append(li > 0 ? "\n" : "").append(maxPadSpacesPerGap == 0 || lastSubLine || subLine.size() < 2
                     ? joinUnjustified(subLine)
-                    : joinJustified(subLine, widthPoints, font, frc));
+                    : joinJustified(subLine, widthPoints, maxPadSpacesPerGap, font, frc));
         }
         return out.toString();
     }
@@ -263,7 +276,7 @@ public class ThaiTextUtil {
         return out.toString();
     }
 
-    private static String joinJustified(List<String> segments, float widthPoints, Font font, FontRenderContext frc) {
+    private static String joinJustified(List<String> segments, float widthPoints, int maxPadSpacesPerGap, Font font, FontRenderContext frc) {
         float rawWidth = 0f;
         for (String seg : segments) {
             rawWidth += width(seg, font, frc);
@@ -285,7 +298,7 @@ public class ThaiTextUtil {
         float slack = Math.max(0f, widthPoints - rawWidth - 0.5f);
         float padSpaceWidth = width(PAD_SPACE, font, frc);
         int totalPadSpaces = padSpaceWidth > 0f ? (int) Math.floor(slack / padSpaceWidth) : 0;
-        if (totalPadSpaces > MAX_PAD_SPACES_PER_GAP * gaps) {
+        if (totalPadSpaces > maxPadSpacesPerGap * gaps) {
             return joinUnjustified(segments);
         }
 
