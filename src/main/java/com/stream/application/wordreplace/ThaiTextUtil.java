@@ -32,6 +32,16 @@ public class ThaiTextUtil {
     // it gives up no more than MAX_PUNCTUATION_LOSS_SHARE of the line.
     private static final String BREAK_AFTER = "./-_,;:?&=#@";
     private static final float MAX_PUNCTUATION_LOSS_SHARE = 0.15f;
+    // addThaiWordBreakDistributed shares the room left on a line between gaps: a space gets this many shares, a gap
+    // between Thai characters one.
+    private static final float SPACE_GAP_SHARES = 4f;
+    // Most room one share may get; a line needing more is also stretched between Latin letters, and left unjustified
+    // if even that is not enough.
+    private static final float MAX_POINTS_PER_SHARE = 2f;
+    // A thin gap is a space in a font size that is a multiple of THIN_SPACE_SIZE_STEP and at least MIN_THIN_SPACE_SIZE:
+    // DOCX export writes sizes as whole half-points, and Word may not keep anything below 1pt.
+    private static final float THIN_SPACE_SIZE_STEP = 0.5f;
+    private static final float MIN_THIN_SPACE_SIZE = 1f;
     private static final String FONT_RESOURCE = "THSarabunNew.ttf";
     private static final Map<Float, Font> FONT_CACHE = new ConcurrentHashMap<>();
 
@@ -100,6 +110,40 @@ public class ThaiTextUtil {
     }
 
     /**
+     * Wraps like {@link #addThaiWordBreakJustified(String, float, float)} (ICU Thai and English word boundaries,
+     * explicit newlines, long tokens broken to fill a line) but justifies the way Thai typesetting does (Word's
+     * "Thai Distributed"): the room left on a line is spread thinly between Thai characters, never right after a
+     * leading vowel (เ แ โ ใ ไ), with a larger share at the spaces, instead of whole spaces at Thai word boundaries,
+     * which read as breaks inside Thai words. Lines without Thai are stretched at their spaces, and between letters
+     * as well only when the spaces alone would get too wide.
+     * <p>
+     * The result is JasperReports styled text, so the text field must use {@code markup="styled"}: a thin gap is a
+     * space in a smaller font size, in steps of 0.5pt from 1pt, so DOCX export (whole half-points) gets the same
+     * widths as PDF.
+     */
+    public static String addThaiWordBreakDistributed(String input, float widthPoints, float fontSizePt) {
+        Font font = font(fontSizePt);
+        FontRenderContext frc = new FontRenderContext(null, true, true);
+
+        // characters XML does not allow would make the styled text unparsable, and JasperReports would print the markup
+        String[] lines = input.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "").split("\\r?\\n");
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            List<List<String>> wrapped = wrapLine(lines[i], widthPoints, font, frc);
+            for (int li = 0; li < wrapped.size(); li++) {
+                String text = String.join("", wrapped.get(li));
+                out.append(li > 0 ? "\n" : "").append(li == wrapped.size() - 1
+                        ? escapeStyled(text)
+                        : distribute(text, widthPoints, fontSizePt, font, frc));
+            }
+            if (i < lines.length - 1) {
+                out.append("\n");
+            }
+        }
+        return out.toString();
+    }
+
+    /**
      * Same wrapping as {@link #addThaiWordBreakJustified(String, float, float)} (ICU word boundaries, explicit
      * newlines, lines of at most {@code widthPoints}) but the lines are not padded, for text where extra spaces
      * would be wrong: names, addresses, URLs, e-mail.
@@ -128,24 +172,31 @@ public class ThaiTextUtil {
     }
 
     private static String justifyLine(String line, float widthPoints, Font font, FontRenderContext frc, int maxPadSpacesPerGap) {
-        List<String> segments = segment(line);
-        List<List<String>> wrapped = wrap(segments, widthPoints, font, frc);
+        List<List<String>> wrapped = wrapLine(line, widthPoints, font, frc);
 
         StringBuilder out = new StringBuilder();
         for (int li = 0; li < wrapped.size(); li++) {
             List<String> subLine = wrapped.get(li);
-            // spaces at the end of a line are invisible, and wrap() let them hang past the edge
-            int last = subLine.size() - 1;
-            subLine.set(last, stripTrailingWhitespace(subLine.get(last)));
-            if (subLine.get(last).isEmpty() && last > 0) {
-                subLine.remove(last);
-            }
             boolean lastSubLine = (li == wrapped.size() - 1);
             out.append(li > 0 ? "\n" : "").append(maxPadSpacesPerGap == 0 || lastSubLine || subLine.size() < 2
                     ? joinUnjustified(subLine)
                     : joinJustified(subLine, widthPoints, maxPadSpacesPerGap, font, frc));
         }
         return out.toString();
+    }
+
+    // The lines of one paragraph, each a list of ICU segments, with the spaces at the end of each line removed:
+    // they are invisible, and wrap() let them hang past the edge.
+    private static List<List<String>> wrapLine(String line, float widthPoints, Font font, FontRenderContext frc) {
+        List<List<String>> wrapped = wrap(segment(line), widthPoints, font, frc);
+        for (List<String> subLine : wrapped) {
+            int last = subLine.size() - 1;
+            subLine.set(last, stripTrailingWhitespace(subLine.get(last)));
+            if (subLine.get(last).isEmpty() && last > 0) {
+                subLine.remove(last);
+            }
+        }
+        return wrapped;
     }
 
     private static List<String> segment(String line) {
@@ -321,6 +372,98 @@ public class ThaiTextUtil {
             }
         }
         return out.toString();
+    }
+
+    // One line of addThaiWordBreakDistributed as styled text: the room left is shared between the gaps (see
+    // gapShares), and each gap gets whole spaces plus one thin space in a smaller font size. Each gap's rounding is
+    // carried over to the next, so the line ends within a fraction of a point of the edge.
+    private static String distribute(String line, float widthPoints, float fontSizePt, Font font, FontRenderContext frc) {
+        List<String> chars = characters(line);
+        float slack = widthPoints - width(line, font, frc) - 0.5f;
+        if (chars.size() < 2 || slack <= 0f) {
+            return escapeStyled(line);
+        }
+
+        // gap i lies between chars i and i + 1
+        float[] shares = new float[chars.size() - 1];
+        float totalShares = 0f;
+        for (int i = 0; i < shares.length; i++) {
+            shares[i] = gapShares(chars.get(i), chars.get(i + 1));
+            totalShares += shares[i];
+        }
+        if (totalShares == 0f || slack / totalShares > MAX_POINTS_PER_SHARE) {
+            totalShares = 0f;
+            for (int i = 0; i < shares.length; i++) {
+                if (shares[i] == 0f && isLetterGap(chars.get(i), chars.get(i + 1))) {
+                    shares[i] = 1f;
+                }
+                totalShares += shares[i];
+            }
+            if (totalShares == 0f || slack / totalShares > MAX_POINTS_PER_SHARE) {
+                return escapeStyled(line);
+            }
+        }
+
+        float pointsPerShare = slack / totalShares;
+        float spaceWidth = width(PAD_SPACE, font, frc);
+        float spaceWidthPerSize = spaceWidth / fontSizePt;
+        StringBuilder out = new StringBuilder();
+        float carry = 0f;
+        for (int i = 0; i < chars.size(); i++) {
+            out.append(escapeStyled(chars.get(i)));
+            if (i < shares.length && shares[i] > 0f) {
+                float want = shares[i] * pointsPerShare + carry;
+                int fullSpaces = (int) (want / spaceWidth);
+                float thinSize = (float) Math.floor((want - fullSpaces * spaceWidth) / spaceWidthPerSize / THIN_SPACE_SIZE_STEP) * THIN_SPACE_SIZE_STEP;
+                if (thinSize < MIN_THIN_SPACE_SIZE) {
+                    thinSize = 0f;
+                }
+                for (int s = 0; s < fullSpaces; s++) {
+                    out.append(PAD_SPACE);
+                }
+                if (thinSize > 0f) {
+                    out.append("<style size=\"").append(thinSize).append("\">").append(PAD_SPACE).append("</style>");
+                }
+                carry = want - fullSpaces * spaceWidth - thinSize * spaceWidthPerSize;
+            }
+        }
+        return out.toString();
+    }
+
+    // Shares of a line's spare room for the gap between two characters: SPACE_GAP_SHARES after a space (the last of a
+    // run), one between Thai characters or a Thai character and a letter or digit, none elsewhere (Latin letters,
+    // punctuation, right after a leading vowel).
+    private static float gapShares(String left, String right) {
+        if (isSpace(left)) {
+            return isSpace(right) ? 0f : SPACE_GAP_SHARES;
+        }
+        return (isThai(left) || isThai(right)) && isLetterGap(left, right) ? 1f : 0f;
+    }
+
+    private static boolean isLetterGap(String left, String right) {
+        return Character.isLetterOrDigit(left.codePointAt(0)) && Character.isLetterOrDigit(right.codePointAt(0))
+                && !isThaiLeadingVowel(left.charAt(left.length() - 1));
+    }
+
+    private static boolean isSpace(String character) {
+        int c = character.codePointAt(0);
+        return Character.isWhitespace(c) || Character.isSpaceChar(c);
+    }
+
+    // Grapheme clusters: a Thai consonant stays together with its vowel and tone marks.
+    private static List<String> characters(String text) {
+        BreakIterator chars = BreakIterator.getCharacterInstance(new Locale("th", "TH"));
+        chars.setText(text);
+        List<String> out = new ArrayList<>();
+        int start = chars.first();
+        for (int end = chars.next(); end != BreakIterator.DONE; start = end, end = chars.next()) {
+            out.add(text.substring(start, end));
+        }
+        return out;
+    }
+
+    private static String escapeStyled(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static float width(String text, Font font, FontRenderContext frc) {
