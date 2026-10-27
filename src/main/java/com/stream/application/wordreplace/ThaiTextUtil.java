@@ -122,6 +122,21 @@ public class ThaiTextUtil {
      * widths as PDF.
      */
     public static String addThaiWordBreakDistributed(String input, float widthPoints, float fontSizePt) {
+        return distributedText(input, widthPoints, fontSizePt, false);
+    }
+
+    /**
+     * For report4 Page05_01 only (found / recommendation / reference text), so it can be tuned without changing any
+     * other report. Same as {@link #addThaiWordBreakDistributed(String, float, float)}: lines break at ICU Thai and
+     * English word boundaries, line breaks and blank lines in the text are kept, and lines are justified by thin gaps
+     * between Thai characters rather than spaces inside Thai words. In addition a paragraph's leading indent keeps its
+     * width: the room left on its first line goes to the gaps after the indent. Needs markup="styled" on the field.
+     */
+    public static String addThaiWordBreakPage0501(String input, float widthPoints, float fontSizePt) {
+        return distributedText(input, widthPoints, fontSizePt, true);
+    }
+
+    private static String distributedText(String input, float widthPoints, float fontSizePt, boolean keepIndent) {
         Font font = font(fontSizePt);
         FontRenderContext frc = new FontRenderContext(null, true, true);
 
@@ -134,7 +149,7 @@ public class ThaiTextUtil {
                 String text = String.join("", wrapped.get(li));
                 out.append(li > 0 ? "\n" : "").append(li == wrapped.size() - 1
                         ? escapeStyled(text)
-                        : distribute(text, widthPoints, fontSizePt, font, frc));
+                        : distribute(text, widthPoints, fontSizePt, keepIndent, font, frc));
             }
             if (i < lines.length - 1) {
                 out.append("\n");
@@ -376,8 +391,9 @@ public class ThaiTextUtil {
 
     // One line of addThaiWordBreakDistributed as styled text: the room left is shared between the gaps (see
     // gapShares), and each gap gets whole spaces plus one thin space in a smaller font size. Each gap's rounding is
-    // carried over to the next, so the line ends within a fraction of a point of the edge.
-    private static String distribute(String line, float widthPoints, float fontSizePt, Font font, FontRenderContext frc) {
+    // carried over to the next, so the line ends within a fraction of a point of the edge. With keepIndent the spaces
+    // a line starts with (a paragraph indent) get no share.
+    private static String distribute(String line, float widthPoints, float fontSizePt, boolean keepIndent, Font font, FontRenderContext frc) {
         List<String> chars = characters(line);
         float slack = widthPoints - width(line, font, frc) - 0.5f;
         if (chars.size() < 2 || slack <= 0f) {
@@ -389,7 +405,12 @@ public class ThaiTextUtil {
         float totalShares = 0f;
         for (int i = 0; i < shares.length; i++) {
             shares[i] = gapShares(chars.get(i), chars.get(i + 1));
-            totalShares += shares[i];
+        }
+        for (int i = 0; keepIndent && i < shares.length && isSpace(chars.get(i)); i++) {
+            shares[i] = 0f;
+        }
+        for (float share : shares) {
+            totalShares += share;
         }
         if (totalShares == 0f || slack / totalShares > MAX_POINTS_PER_SHARE) {
             totalShares = 0f;
