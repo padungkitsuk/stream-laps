@@ -5,6 +5,7 @@ import java.awt.font.FontRenderContext;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -42,6 +43,10 @@ public class ThaiTextUtil {
     // DOCX export writes sizes as whole half-points, and Word may not keep anything below 1pt.
     private static final float THIN_SPACE_SIZE_STEP = 0.5f;
     private static final float MIN_THIN_SPACE_SIZE = 1f;
+    // addThaiWordBreakPage05Pic02 balances lines by minimising the sum of their squared widths; a line break also costs
+    // these shares of the squared line width when it is not at a space, or falls inside brackets.
+    private static final float NO_SPACE_BREAK_PENALTY_SHARE = 0.25f;
+    private static final float IN_BRACKETS_BREAK_PENALTY_SHARE = 0.5f;
     private static final String FONT_RESOURCE = "THSarabunNew.ttf";
     private static final Map<Float, Font> FONT_CACHE = new ConcurrentHashMap<>();
 
@@ -134,6 +139,96 @@ public class ThaiTextUtil {
      */
     public static String addThaiWordBreakPage0501(String input, float widthPoints, float fontSizePt) {
         return distributedText(input, widthPoints, fontSizePt, true);
+    }
+
+    /**
+     * For report4 Page05_pic_02 only (the centred caption under each picture), so it can be tuned without changing any
+     * other report. Wraps at ICU Thai and English word boundaries into the fewest lines that fit, then moves the breaks
+     * so the lines come out about equally long, preferring a real space and keeping a bracketed term such as
+     * "(Chemical Storage Cabinet)" together. Lines are not padded. {@code fontSizePt} must be the field's font size:
+     * a smaller one lets lines through that JasperReports then wraps again, leaving a word alone on a line.
+     */
+    public static String addThaiWordBreakPage05Pic02(String input, float widthPoints, float fontSizePt) {
+        return balancedText(input, widthPoints, fontSizePt);
+    }
+
+    /**
+     * For report4 Page05_pic_01 only (the centred caption under the single picture), so it can be tuned without
+     * changing any other report. Currently the same as {@link #addThaiWordBreakPage05Pic02(String, float, float)}.
+     */
+    public static String addThaiWordBreakPage05Pic01(String input, float widthPoints, float fontSizePt) {
+        return balancedText(input, widthPoints, fontSizePt);
+    }
+
+    private static String balancedText(String input, float widthPoints, float fontSizePt) {
+        Font font = font(fontSizePt);
+        FontRenderContext frc = new FontRenderContext(null, true, true);
+
+        String[] lines = input.split("\\r?\\n");
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            out.append(balanceLine(lines[i], widthPoints, font, frc));
+            if (i < lines.length - 1) {
+                out.append("\n");
+            }
+        }
+        return out.toString();
+    }
+
+    private static String balanceLine(String line, float widthPoints, Font font, FontRenderContext frc) {
+        List<List<String>> wrapped = wrap(segment(line), widthPoints, font, frc);
+        int lineCount = wrapped.size();
+        List<String> pieces = new ArrayList<>();
+        wrapped.forEach(pieces::addAll);
+        int n = pieces.size();
+
+        // a line break after piece i - 1 costs breakCost[i]
+        float[] breakCost = new float[n + 1];
+        int depth = 0;
+        for (int i = 1; i < n; i++) {
+            String piece = pieces.get(i - 1);
+            depth += piece.length() - piece.replaceAll("[(\\[]", "").length();
+            depth -= piece.length() - piece.replaceAll("[)\\]]", "").length();
+            float share = (endsWithWhitespace(piece) ? 0f : NO_SPACE_BREAK_PENALTY_SHARE) + (depth > 0 ? IN_BRACKETS_BREAK_PENALTY_SHARE : 0f);
+            breakCost[i] = share * widthPoints * widthPoints;
+        }
+
+        // cost[k][e]: cheapest way to put the first e pieces on k lines; from[k][e]: where the k-th of those lines starts
+        double[][] cost = new double[lineCount + 1][n + 1];
+        int[][] from = new int[lineCount + 1][n + 1];
+        for (double[] row : cost) {
+            Arrays.fill(row, Double.MAX_VALUE);
+        }
+        cost[0][0] = 0d;
+        for (int k = 1; k <= lineCount; k++) {
+            for (int s = k - 1; s < n; s++) {
+                if (cost[k - 1][s] == Double.MAX_VALUE) {
+                    continue;
+                }
+                for (int e = s + 1; e <= n; e++) {
+                    float w = width(stripTrailingWhitespace(String.join("", pieces.subList(s, e))), font, frc);
+                    if (w > widthPoints && e > s + 1) {
+                        break;
+                    }
+                    double candidate = cost[k - 1][s] + (double) w * w + breakCost[e];
+                    if (candidate < cost[k][e]) {
+                        cost[k][e] = candidate;
+                        from[k][e] = s;
+                    }
+                }
+            }
+        }
+
+        List<String> lines = new ArrayList<>();
+        if (cost[lineCount][n] == Double.MAX_VALUE) {
+            // the joined width of a wrapped line can round just past the edge: keep the lines wrap() made
+            wrapped.forEach(subLine -> lines.add(stripTrailingWhitespace(String.join("", subLine))));
+        } else {
+            for (int k = lineCount, e = n; k > 0; e = from[k][e], k--) {
+                lines.add(0, stripTrailingWhitespace(String.join("", pieces.subList(from[k][e], e))));
+            }
+        }
+        return String.join("\n", lines);
     }
 
     private static String distributedText(String input, float widthPoints, float fontSizePt, boolean keepIndent) {
